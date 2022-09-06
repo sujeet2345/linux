@@ -1,0 +1,180 @@
+  1  
+Documentation/devicetree/bindings/input/touchscreen/goodix.yaml
+@@ -16,6 +16,7 @@ properties:
+  compatible:
+    enum:
+      - goodix,gt1151
+      - goodix,gt1158
+      - goodix,gt5663
+      - goodix,gt5688
+      - goodix,gt911
+  1  
+Documentation/input/joydev/joystick.rst
+@@ -517,6 +517,7 @@ All I-Force devices are supported by the iforce module. This includes:
+* AVB Mag Turbo Force
+* AVB Top Shot Pegasus
+* AVB Top Shot Force Feedback Racing Wheel
+* Boeder Force Feedback Wheel
+* Logitech WingMan Force
+* Logitech WingMan Force Wheel
+* Guillemot Race Leader Force Feedback
+  1  
+MAINTAINERS
+@@ -10032,6 +10032,7 @@ F:	Documentation/devicetree/bindings/input/
+F:	Documentation/devicetree/bindings/serio/
+F:	Documentation/input/
+F:	drivers/input/
+F:	include/dt-bindings/input/
+F:	include/linux/input.h
+F:	include/linux/input/
+F:	include/uapi/linux/input-event-codes.h
+  1  
+drivers/input/joystick/iforce/iforce-main.c
+@@ -50,6 +50,7 @@ static struct iforce_device iforce_device[] = {
+	{ 0x046d, 0xc291, "Logitech WingMan Formula Force",		btn_wheel, abs_wheel, ff_iforce },
+	{ 0x05ef, 0x020a, "AVB Top Shot Pegasus",			btn_joystick_avb, abs_avb_pegasus, ff_iforce },
+	{ 0x05ef, 0x8884, "AVB Mag Turbo Force",			btn_wheel, abs_wheel, ff_iforce },
+	{ 0x05ef, 0x8886, "Boeder Force Feedback Wheel",		btn_wheel, abs_wheel, ff_iforce },
+	{ 0x05ef, 0x8888, "AVB Top Shot Force Feedback Racing Wheel",	btn_wheel, abs_wheel, ff_iforce }, //?
+	{ 0x061c, 0xc0a4, "ACT LABS Force RS",                          btn_wheel, abs_wheel, ff_iforce }, //?
+	{ 0x061c, 0xc084, "ACT LABS Force RS",				btn_wheel, abs_wheel, ff_iforce },
+  6  
+drivers/input/joystick/iforce/iforce-serio.c
+@@ -39,7 +39,7 @@ static void iforce_serio_xmit(struct iforce *iforce)
+
+again:
+	if (iforce->xmit.head == iforce->xmit.tail) {
+		clear_bit(IFORCE_XMIT_RUNNING, iforce->xmit_flags);
+		iforce_clear_xmit_and_wake(iforce);
+		spin_unlock_irqrestore(&iforce->xmit_lock, flags);
+		return;
+	}
+@@ -64,7 +64,7 @@ static void iforce_serio_xmit(struct iforce *iforce)
+	if (test_and_clear_bit(IFORCE_XMIT_AGAIN, iforce->xmit_flags))
+		goto again;
+
+	clear_bit(IFORCE_XMIT_RUNNING, iforce->xmit_flags);
+	iforce_clear_xmit_and_wake(iforce);
+
+	spin_unlock_irqrestore(&iforce->xmit_lock, flags);
+}
+@@ -169,7 +169,7 @@ static irqreturn_t iforce_serio_irq(struct serio *serio,
+			iforce_serio->cmd_response_len = iforce_serio->len;
+
+			/* Signal that command is done */
+			wake_up(&iforce->wait);
+			wake_up_all(&iforce->wait);
+		} else if (likely(iforce->type)) {
+			iforce_process_packet(iforce, iforce_serio->id,
+					      iforce_serio->data_in,
+  8  
+drivers/input/joystick/iforce/iforce-usb.c
+@@ -30,7 +30,7 @@ static void __iforce_usb_xmit(struct iforce *iforce)
+	spin_lock_irqsave(&iforce->xmit_lock, flags);
+
+	if (iforce->xmit.head == iforce->xmit.tail) {
+		clear_bit(IFORCE_XMIT_RUNNING, iforce->xmit_flags);
+		iforce_clear_xmit_and_wake(iforce);
+		spin_unlock_irqrestore(&iforce->xmit_lock, flags);
+		return;
+	}
+@@ -58,9 +58,9 @@ static void __iforce_usb_xmit(struct iforce *iforce)
+	XMIT_INC(iforce->xmit.tail, n);
+
+	if ( (n=usb_submit_urb(iforce_usb->out, GFP_ATOMIC)) ) {
+		clear_bit(IFORCE_XMIT_RUNNING, iforce->xmit_flags);
+		dev_warn(&iforce_usb->intf->dev,
+			 "usb_submit_urb failed %d\n", n);
+		iforce_clear_xmit_and_wake(iforce);
+	}
+
+	/* The IFORCE_XMIT_RUNNING bit is not cleared here. That's intended.
+@@ -175,15 +175,15 @@ static void iforce_usb_out(struct urb *urb)
+	struct iforce *iforce = &iforce_usb->iforce;
+
+	if (urb->status) {
+		clear_bit(IFORCE_XMIT_RUNNING, iforce->xmit_flags);
+		dev_dbg(&iforce_usb->intf->dev, "urb->status %d, exiting\n",
+			urb->status);
+		iforce_clear_xmit_and_wake(iforce);
+		return;
+	}
+
+	__iforce_usb_xmit(iforce);
+
+	wake_up(&iforce->wait);
+	wake_up_all(&iforce->wait);
+}
+
+static int iforce_usb_probe(struct usb_interface *intf,
+  6  
+drivers/input/joystick/iforce/iforce.h
+@@ -119,6 +119,12 @@ static inline int iforce_get_id_packet(struct iforce *iforce, u8 id,
+					 response_data, response_len);
+}
+
+static inline void iforce_clear_xmit_and_wake(struct iforce *iforce)
+{
+	clear_bit(IFORCE_XMIT_RUNNING, iforce->xmit_flags);
+	wake_up_all(&iforce->wait);
+}
+
+/* Public functions */
+/* iforce-main.c */
+int iforce_init_device(struct device *parent, u16 bustype,
+  1  
+drivers/input/misc/rk805-pwrkey.c
+@@ -98,6 +98,7 @@ static struct platform_driver rk805_pwrkey_driver = {
+};
+module_platform_driver(rk805_pwrkey_driver);
+
+MODULE_ALIAS("platform:rk805-pwrkey");
+MODULE_AUTHOR("Joseph Chen <chenjh@rock-chips.com>");
+MODULE_DESCRIPTION("RK805 PMIC Power Key driver");
+MODULE_LICENSE("GPL");
+  2  
+drivers/input/touchscreen/goodix.c
+@@ -95,6 +95,7 @@ static const struct goodix_chip_data gt9x_chip_data = {
+
+static const struct goodix_chip_id goodix_chip_ids[] = {
+	{ .id = "1151", .data = &gt1x_chip_data },
+	{ .id = "1158", .data = &gt1x_chip_data },
+	{ .id = "5663", .data = &gt1x_chip_data },
+	{ .id = "5688", .data = &gt1x_chip_data },
+	{ .id = "917S", .data = &gt1x_chip_data },
+@@ -1508,6 +1509,7 @@ MODULE_DEVICE_TABLE(acpi, goodix_acpi_match);
+#ifdef CONFIG_OF
+static const struct of_device_id goodix_of_match[] = {
+	{ .compatible = "goodix,gt1151" },
+	{ .compatible = "goodix,gt1158" },
+	{ .compatible = "goodix,gt5663" },
+	{ .compatible = "goodix,gt5688" },
+	{ .compatible = "goodix,gt911" },
+0 comments on commit 6433fe0
+@sujeet2345
+ 
+Add heading textAdd bold text, <Ctrl+b>Add italic text, <Ctrl+i>
+Add a quote, <Ctrl+Shift+.>Add code, <Ctrl+e>Add a link, <Ctrl+k>
+Add a bulleted list, <Ctrl+Shift+8>Add a numbered list, <Ctrl+Shift+7>Add a task list, <Ctrl+Shift+l>
+Directly mention a user or team
+Reference an issue, pull request, or discussion
+Add saved reply
+Leave a comment
+No file chosen
+Attach files by dragging & dropping, selecting or pasting them.
+Styling with Markdown is supported
+ You’re not receiving notifications from this thread.
+Footer
+© 2022 GitHub, Inc.
+Footer navigation
+Terms
+Privacy
+Security
+Status
+Docs
+Contact GitHub
+Pricing
+API
+Training
+Blog
+About
